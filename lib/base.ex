@@ -7,6 +7,7 @@ defmodule Nerves.IO.PN532.Base do
   import Nerves.IO.PN532.Frames
 
   @read_timeout 500
+  @detection_interval 50
 
   @wakeup_preamble <<0x55, 0x55, 0x00, 0x00, 0x00>>
   @sam_mode_normal <<0x14, 0x01, 0x00, 0x00>>
@@ -69,24 +70,12 @@ defmodule Nerves.IO.PN532.Base do
     GenServer.call(pid, :get_firmware_version)
   end
 
-  def in_list_passive_target(pid, :iso_14443_type_a) do
-    GenServer.call(pid, {:in_list_passive_target, 0x00})
-  end
-
-  def in_list_passive_target(pid, :felica_212) do
-    GenServer.call(pid, {:in_list_passive_target, 0x01})
-  end
-
-  def in_list_passive_target(pid, :felica_424) do
-    GenServer.call(pid, {:in_list_passive_target, 0x02})
-  end
-
-  def in_list_passive_target(pid, :iso_14443_type_b) do
-    GenServer.call(pid, {:in_list_passive_target, 0x03})
-  end
-
-  def in_list_passive_target(pid, :jewel) do
-    GenServer.call(pid, {:in_list_passive_target, 0x04})
+  def in_list_passive_target(pid, target) do
+    with {:ok, target_byte} <- get_target_type(target) do
+      GenServer.call(pid, {:in_list_passive_target, target_byte})
+    else
+      error -> {:error, error}
+    end
   end
 
   def set_serial_baud_rate(pid, baud_rate) do
@@ -94,6 +83,18 @@ defmodule Nerves.IO.PN532.Base do
       GenServer.call(pid, {:set_serial_baud_rate, baudrate_byte})
     else
       error -> {:error, error}
+    end
+  end
+
+  @spec get_target_type(atom) :: {:ok, binary} | :invalid_target_type
+  def get_target_type(target) do
+    case target do
+      :iso_14443_type_a -> {:ok, 0x00}
+      :felica_212 -> {:ok, 0x01}
+      :felica_424 -> {:ok, 0x02}
+      :iso_14443_type_b -> {:ok, 0x03}
+      :jewel -> {:ok, 0x04}
+      _ -> :invalid_target_type
     end
   end
 
@@ -136,14 +137,15 @@ defmodule Nerves.IO.PN532.Base do
     receive do
       ack -> Logger.debug("SAM ACK: #{inspect ack}")
     after
-      15 -> :timeout
+      16 -> :timeout
     end
 
     receive do
       response -> Logger.debug("SAM response: #{inspect response}")
     after
-      15 -> :timeout
+      16 -> :timeout
     end
+
     :normal
   end
 
@@ -156,7 +158,7 @@ defmodule Nerves.IO.PN532.Base do
   end
 
   def handle_call({:open, com_port, uart_speed}, _from, state = %{uart_pid: uart_pid}) do     
-    with :ok <- Nerves.UART.open(uart_pid, com_port, speed: uart_speed, active: true, framing: PN532.Framing) do
+    with :ok <- Nerves.UART.open(uart_pid, com_port, speed: uart_speed, active: true, framing: Nerves.IO.PN532.UART.Framing) do
       {:reply, :ok, %{state | uart_open: true}}
     else
       error -> 
@@ -185,7 +187,8 @@ defmodule Nerves.IO.PN532.Base do
           Logger.debug("Received firmware version frame on #{inspect com_port} with version: #{inspect version}.#{inspect revision}.#{inspect support}")
           {:ok, %{ic_version: ic_version, version: version, revision: revision, support: support}}
       after
-        300 -> {:error, :timeout}
+        @read_timeout ->
+          {:error, :timeout}
       end
 
     {:reply, response, %{state | power_mode: new_power_mode}}
@@ -199,10 +202,11 @@ defmodule Nerves.IO.PN532.Base do
     {:reply, :ok, %{state | power_mode: new_power_mode}}
   end
 
-  def handle_call({:in_list_passive_target, target}, _from, state = %{uart_pid: uart_pid}) do
+  def handle_call({:in_list_passive_target, target_type, max_targets}, _from, state = %{uart_pid: uart_pid}) do
     new_power_mode = wakeup(state)
     
-    detect_target(uart_pid, target)
+    in_list_passive_target_command = <<0x4A, max_targets, target_type>>
+    write_bytes(uart_pid, in_list_passive_target_command)
 
     card_id_response = 
       receive do
@@ -213,10 +217,11 @@ defmodule Nerves.IO.PN532.Base do
         
         # detected multiple cards
         {:nerves_uart, com_port, <<0xD5, 0x4B, total_cards::signed-integer, rest::binary>>} ->
-          cards = for <<in_list_passive_target_card(target_number, sens_res, sel_res, identifier) <- rest>>, do: %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}          
-          base16 = cards 
-            |> Enum.map(fn(x) -> Base.encode16(x.nfcid) end)
-          Logger.info("Received InListPassiveTarget with '#{inspect total_cards}' new Mifare cards detection frame on #{inspect com_port} with ID: #{inspect base16}")
+          cards = for <<in_list_passive_target_card(target_number, sens_res, sel_res, identifier) <- rest>> do 
+            %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}
+          end
+          identifiers_in_base16 = cards |> Enum.map(fn(x) -> Base.encode16(x.nfcid) end)
+          Logger.info("Received InListPassiveTarget with '#{inspect total_cards}' new Mifare cards detection frame on #{inspect com_port} with ID: #{inspect identifiers_in_base16}")
           {:ok, cards}
       after
         @read_timeout ->
@@ -235,6 +240,7 @@ defmodule Nerves.IO.PN532.Base do
 
   def handle_cast(:stop_target_detection, state = %{uart_pid: uart_pid, detection_ref: detection_ref}) when detection_ref != nil do
     Process.cancel_timer(detection_ref)
+    # send ACK frame to cancel last command
     write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
     {:noreply, %{state | detection_ref: nil}}
   end
@@ -244,9 +250,37 @@ defmodule Nerves.IO.PN532.Base do
     {:noreply, state}
   end
 
-  def handle_cast({:start_target_detection, type}, state) do
-    Logger.debug("Starting target detection")
-    Process.send(self(), {:detect_target, type}, [])
+  def handle_cast({:start_target_detection, target_type}, state) do
+    with {:ok, target_byte} <- get_target_type(target_type) do
+      Logger.debug("Starting target detection")
+      Process.send(self(), {:detect_target, target_byte}, [])
+    end
+    {:noreply, state}
+  end
+
+  def handle_info({:detect_target, target_type}, state = %{uart_pid: uart_pid}) do
+    new_power_mode = wakeup(state)
+
+    in_list_passive_target_command = <<0x4A, 0x01, target_type>>
+    write_bytes(uart_pid, in_list_passive_target_command)
+    
+    detection_ref = Process.send_after(self(), {:detect_target, target_type}, @detection_interval)
+
+    {:noreply, %{state | power_mode: new_power_mode, detection_ref: detection_ref}}
+  end
+
+  def handle_info({:nerves_uart, com_port, <<0x7F>>}, state) do
+    Logger.error("Received Error frame on #{inspect com_port}")
+    {:noreply, state}
+  end
+
+  def handle_info({:nerves_uart, _com_port, @ack_frame}, state) do
+    #Logger.info("Received ACK frame on #{inspect com_port}")
+    {:noreply, state}
+  end
+
+  def handle_info({:nerves_uart, _com_port, @nack_frame}, state) do
+    #Logger.info("Received NACK frame on #{inspect com_port}")
     {:noreply, state}
   end
 end
