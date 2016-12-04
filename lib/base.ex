@@ -28,6 +28,10 @@ defmodule Nerves.IO.PN532.Base do
     GenServer.call(pid, :close) 
   end
 
+  def get_current_card(pid) do
+    GenServer.call(pid, :get_current_card) 
+  end
+
   def start_target_detection(pid, type) do    
     GenServer.cast(pid, {:start_target_detection, type})
   end
@@ -42,8 +46,10 @@ defmodule Nerves.IO.PN532.Base do
         :key_a -> 0x60
         :key_b -> 0x61
       end
+    #data = <<block :: binary-size(1), key, card_id>>
+    data = <<block>> <> key <> card_id
 
-    GenServer.call(pid, {:in_data_exchange, device_id, command, <<block, key, card_id>>})
+    GenServer.call(pid, {:in_data_exchange, device_id, command, data})
   end
 
   def read(pid, device_id, block) do
@@ -70,9 +76,9 @@ defmodule Nerves.IO.PN532.Base do
     GenServer.call(pid, :get_firmware_version)
   end
 
-  def in_list_passive_target(pid, target) do
+  def in_list_passive_target(pid, target, max_targets) do
     with {:ok, target_byte} <- get_target_type(target) do
-      GenServer.call(pid, {:in_list_passive_target, target_byte})
+      GenServer.call(pid, {:in_list_passive_target, target_byte, max_targets})
     else
       error -> {:error, error}
     end
@@ -123,6 +129,7 @@ defmodule Nerves.IO.PN532.Base do
               uart_open: false,
               uart_speed: 115200,
               power_mode: :low_v_bat, 
+              current_card: nil,
               detection_ref: nil
            }}
   end
@@ -151,6 +158,68 @@ defmodule Nerves.IO.PN532.Base do
 
   defp wakeup(%{power_mode: power_mode}) do
     power_mode
+  end
+
+  defp get_error(error_byte) do
+    case error_byte do
+      0x01 -> {:target_timeout, "The target has not answered"}
+      0x02 -> {:crc_error, "A CRC error has been detected by the CIU"}
+      0x03 -> {:parity_error, "A Parity error has been detected by the CIU"}
+      0x04 -> {:bit_count_error, "During an anti-collision/select operation (ISO/IEC14443-3 Type A and ISO/IEC18092 106 kbps passive mode), an erroneous Bit Count has been detected"}
+      0x05 -> {:mifare_framing_error, "Framing error during Mifare operation"}
+      0x06 -> {:abnormal_bit_collision, "An abnormal bit-collision has been detected during bit wise anti-collision at 106 kbps"}
+      0x07 -> {:buffer_size_insufficient, "Communication buffer size insufficient"}
+      0x09 -> {:rf_buffer_overflow, "RF Buffer overflow has been detected by the CIU (bit BufferOvfl of the register CIU_Error)"}
+      0x0A -> {:rf_field_not_on_in_time, "In active communication mode, the RF field has not been switched on in time by the counterpart (as defined in NFCIP-1 standard)"}
+      0x0B -> {:rf_protocol_error, "RF Protocol error"}
+      0x0D -> {:temperature_error, "Temperature error: the internal temperature sensor has detected overheating, and therefore has automatically switched off the antenna drivers"}
+      0x0E -> {:internal_buffer_overflow, "Internal buffer overflow"}
+      0x10 -> {:invalid_parameter, "Invalid parameter (range, format, ...)"}
+      0x12 -> {:dep_command_received_invalid, "The PN532 configured in target mode does not support the command received from the initiator (the command received is not one of the following: ATR_REQ, WUP_REQ, PSL_REQ, DEP_REQ, DSL_REQ, RLS_REQ"}
+      0x13 -> {:dep_data_format_not_match_spec, "Mifare or ISO/IEC14443-4: The data format does not match to the specification. Depending on the RF protocol used, it can be: Bad length of RF received frame, Incorrect value of PCB or PFB, Incorrect value of PCB or PFB, NAD or DID incoherence."}
+      0x14 -> {:mifare_authentication_error, "Mifare: Authentication error"}
+      0x23 -> {:uid_check_byte_wrong, "ISO/IEC14443-3: UID Check byte is wrong"}
+      0x25 -> {:dep_invalid_device_state, "Invalid device state, the system is in a state which does not allow the operation"}
+      0x26 -> {:op_not_allowed, "Operation not allowed in this configuration (host controller interface)"}
+      0x27 -> {:command_invalid_in_context, "This command is not acceptable due to the current context of the PN532 (Initiator vs. Target, unknown target number, Target not in the good state, ...)"}
+      0x29 -> {:target_released_by_initiator, "The PN532 configured as target has been released by its initiator"}
+      0x2A -> {:card_id_does_not_match, "PN532 and ISO/IEC14443-3B only: the ID of the card does not match, meaning that the expected card has been exchanged with another one."}
+      0x2B -> {:card_disappeared, "PN532 and ISO/IEC14443-3B only: the card previously activated has disappeared."}
+      0x2C -> {:target_initiator_nfcid3_mismatch, "Mismatch between the NFCID3 initiator and the NFCID3 target in DEP 212/424 kbps passive."}
+      0x2D -> {:over_current_event, "An over-current event has been detected"}
+      0x2E -> {:dep_nad_missing, "NAD missing in DEP frame"}
+      _ -> {:unknown_error, "Unknown error"}
+    end
+  end
+
+  defp detect_card(uart_pid, target_type, max_targets) do
+    in_list_passive_target_command = <<0x4A, max_targets, target_type>>
+    write_bytes(uart_pid, in_list_passive_target_command)
+
+    receive do
+      # detected single card
+      {:nerves_uart, com_port, <<0xD5, 0x4B, 0x01, in_list_passive_target_card(target_number, sens_res, sel_res, identifier)>>} ->
+        Logger.debug("Received InListPassiveTarget with Mifare card detection frame on #{inspect com_port} with ID: #{inspect Base.encode16(identifier)}")
+        {:ok, %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}}
+      
+      # detected multiple cards
+      {:nerves_uart, com_port, <<0xD5, 0x4B, total_cards::signed-integer, rest::binary>>} ->
+        cards = for <<in_list_passive_target_card(target_number, sens_res, sel_res, identifier) <- rest>> do 
+          %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}
+        end
+        identifiers_in_base16 = cards |> Enum.map(fn(x) -> Base.encode16(x.nfcid) end)
+        Logger.debug("Received InListPassiveTarget with '#{inspect total_cards}' new Mifare cards on #{inspect com_port} with ID: #{inspect identifiers_in_base16}")
+        {:ok, cards}
+    after
+      @read_timeout ->
+        write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
+        Logger.debug("Timeout InListPassiveTarget")
+        {:error, :timeout}
+    end
+  end
+
+  def handle_call(:get_current_card, _, state = %{current_card: card}) do
+    {:reply, {:ok, card}, state}
   end
 
   def handle_call({:open, _com_port, _uart_speed}, _, state = %{uart_open: true}) do
@@ -198,43 +267,31 @@ defmodule Nerves.IO.PN532.Base do
     new_power_mode = wakeup(state)
 
     write_bytes(uart_pid, <<0x40>> <> <<device_id>> <> <<cmd>> <> data)
+    response = 
+      receive do
+        {:nerves_uart, com_port, <<0xD5, 0x41, 0>>} -> :ok
+        {:nerves_uart, com_port, <<0xD5, 0x41, 0, rest::binary>>} -> {:ok, rest}
+        {:nerves_uart, com_port, <<0xD5, 0x41, status>>} ->
+          error =  get_error(status)
+          {:error, error}
+      after
+        @read_timeout ->
+          {:error, :timeout}
+      end
 
-    {:reply, :ok, %{state | power_mode: new_power_mode}}
+    {:reply, response, %{state | power_mode: new_power_mode}}
   end
 
   def handle_call({:in_list_passive_target, target_type, max_targets}, _from, state = %{uart_pid: uart_pid}) do
     new_power_mode = wakeup(state)
     
-    in_list_passive_target_command = <<0x4A, max_targets, target_type>>
-    write_bytes(uart_pid, in_list_passive_target_command)
+    response = detect_card(uart_pid, target_type, max_targets)
 
-    card_id_response = 
-      receive do
-        # detected single card
-        {:nerves_uart, com_port, <<0xD5, 0x4B, 0x01, in_list_passive_target_card(target_number, sens_res, sel_res, identifier)>>} ->
-          Logger.info("Received InListPassiveTarget with new Mifare card detection frame on #{inspect com_port} with ID: #{inspect Base.encode16(identifier)}")
-          {:ok, %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}}
-        
-        # detected multiple cards
-        {:nerves_uart, com_port, <<0xD5, 0x4B, total_cards::signed-integer, rest::binary>>} ->
-          cards = for <<in_list_passive_target_card(target_number, sens_res, sel_res, identifier) <- rest>> do 
-            %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}
-          end
-          identifiers_in_base16 = cards |> Enum.map(fn(x) -> Base.encode16(x.nfcid) end)
-          Logger.info("Received InListPassiveTarget with '#{inspect total_cards}' new Mifare cards detection frame on #{inspect com_port} with ID: #{inspect identifiers_in_base16}")
-          {:ok, cards}
-      after
-        @read_timeout ->
-          write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
-          Logger.info("Timeout InListPassiveTarget")
-          {:error, :timeout}
-      end
-
-    {:reply, card_id_response, %{state | power_mode: new_power_mode}}
+    {:reply, response, %{state | power_mode: new_power_mode}}
   end
 
   def handle_cast(:stop_target_detection, state = %{detection_ref: nil}) do
-    Logger.info("Target detection has not been started")
+    Logger.error("Target detection has not been started")
     {:noreply, state}
   end
 
@@ -242,11 +299,11 @@ defmodule Nerves.IO.PN532.Base do
     Process.cancel_timer(detection_ref)
     # send ACK frame to cancel last command
     write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
-    {:noreply, %{state | detection_ref: nil}}
+    {:noreply, %{state | detection_ref: nil, current_card: nil}}
   end
 
   def handle_cast({:start_target_detection, _type}, state = %{detection_ref: detection_ref}) when detection_ref != nil do
-    Logger.info("Target detection has already been started")
+    Logger.error("Target detection has already been started")
     {:noreply, state}
   end
 
@@ -258,15 +315,30 @@ defmodule Nerves.IO.PN532.Base do
     {:noreply, state}
   end
 
-  def handle_info({:detect_target, target_type}, state = %{uart_pid: uart_pid}) do
+  def handle_info({:detect_target, target_type}, state = %{uart_pid: uart_pid, current_card: current_card}) do
     new_power_mode = wakeup(state)
 
-    in_list_passive_target_command = <<0x4A, 0x01, target_type>>
-    write_bytes(uart_pid, in_list_passive_target_command)
+    # in_list_passive_target_command = <<0x4A, 0x01, target_type>>
+    # write_bytes(uart_pid, in_list_passive_target_command)
+    
+    new_state = 
+      with {:ok, card = %{nfcid: identifier}} <- detect_card(uart_pid, target_type, 1) do
+        if current_card != card do
+          Logger.info("Detected new Mifare card with ID: #{Base.encode16(identifier)}")
+          #TODO: notify of new card detection
+        end
+        %{state | current_card: card}
+      else
+        _ ->
+          if current_card != nil do
+            Logger.info("Lost connection with Mifare card with ID: #{Base.encode16(current_card.nfcid)}")
+          end
+          %{state | current_card: nil}
+      end
     
     detection_ref = Process.send_after(self(), {:detect_target, target_type}, @detection_interval)
 
-    {:noreply, %{state | power_mode: new_power_mode, detection_ref: detection_ref}}
+    {:noreply, %{new_state | power_mode: new_power_mode, detection_ref: detection_ref}}
   end
 
   def handle_info({:nerves_uart, com_port, <<0x7F>>}, state) do
