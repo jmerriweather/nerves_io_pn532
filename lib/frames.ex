@@ -1,6 +1,6 @@
 defmodule Nerves.IO.PN532.Frames do
 
-  defmacro in_list_passive_target_card(target_number, sens_res, sel_res, identifier) do
+  defmacro iso_14443_type_a_target(target_number, sens_res, sel_res, identifier) do
     quote do
       <<
         unquote(target_number)::integer-signed, 

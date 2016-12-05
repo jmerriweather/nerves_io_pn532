@@ -17,13 +17,13 @@ defmodule Nerves.IO.PN532.MifareClient do
     Logger.info("Lost connection with Mifare card with ID: #{Base.encode16(identifier)}")
   end
 
-  def process_card_detection(1, in_list_passive_target_card(target_number, sens_res, sel_res, identifier)) do
+  def process_card_detection(1, iso_14443_type_a_target(target_number, sens_res, sel_res, identifier)) do
     Logger.debug("Received Mifare card detection with ID: #{inspect Base.encode16(identifier)}")
     {:ok, %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}}
   end
 
   def process_card_detection(total_cards, card_data) do
-    cards = for <<in_list_passive_target_card(target_number, sens_res, sel_res, identifier) <- card_data>> do 
+    cards = for <<iso_14443_type_a_target(target_number, sens_res, sel_res, identifier) <- card_data>> do 
       %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}
     end
     identifiers_in_base16 = cards |> Enum.map(fn(x) -> Base.encode16(x.nfcid) end)
