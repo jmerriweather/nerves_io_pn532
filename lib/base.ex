@@ -1,35 +1,46 @@
 defmodule Nerves.IO.PN532.Base do
+  @callback process_card_detection(integer, binary) :: {:ok, term} | {:error, term}
+  @callback card_detected(map) :: :ok | {:error, term}
+  @callback card_lost(map) :: :ok | {:error, term}
+
   defmacro __using__(opts \\ []) do
+    read_timeout = Keyword.get(opts, :read_timeout, 500)
+    detection_interval = Keyword.get(opts, :detection_interval, 50)
     quote do
       use GenServer
+
+      @behaviour Nerves.IO.PN532.Base
 
       require Logger
       require Nerves.IO.PN532.Frames
 
       import Nerves.IO.PN532.Frames
 
-      @read_timeout 500
-      @detection_interval 50
+      @read_timeout unquote(read_timeout)
+      @detection_interval unquote(detection_interval)
 
       @wakeup_preamble <<0x55, 0x55, 0x00, 0x00, 0x00>>
       @sam_mode_normal <<0x14, 0x01, 0x00, 0x00>>
       @ack_frame <<0x00, 0xFF>>
       @nack_frame <<0xFF, 0x00>>
 
-      # API
-      
-      def start_link do
-        GenServer.start_link(__MODULE__, [])
+      # API      
+      @spec start_link :: {:ok, pid} | {:error, term}
+      def start_link(opts \\ []) do
+        GenServer.start_link(__MODULE__, [], opts)
       end
 
+      @spec open(pid, String.t, [pos_integer]) :: :ok | {:error, :already_open} | {:error, term}
       def open(pid, com_port, uart_speed \\ 115_200) do
         GenServer.call(pid, {:open, com_port, uart_speed}) 
       end
 
+      @spec close(pid) :: :ok | {:error, :not_open}
       def close(pid) do
         GenServer.call(pid, :close) 
       end
 
+      @spec get_current_card(pid) :: {:ok, map} | {:error, term}
       def get_current_card(pid) do
         GenServer.call(pid, :get_current_card) 
       end
@@ -46,6 +57,7 @@ defmodule Nerves.IO.PN532.Base do
         GenServer.call(pid, :get_firmware_version)
       end
 
+
       def in_list_passive_target(pid, target, max_targets) do
         with {:ok, target_byte} <- get_target_type(target) do
           GenServer.call(pid, {:in_list_passive_target, target_byte, max_targets})
@@ -54,6 +66,7 @@ defmodule Nerves.IO.PN532.Base do
         end
       end
 
+      @spec set_serial_baud_rate(pid, pos_integer) :: :ok | {:error, {atom, String.t}} | {:error, :timeout} 
       def set_serial_baud_rate(pid, baud_rate) do
         with {:ok, baudrate_byte} <- get_baud_rate(baud_rate) do
           GenServer.call(pid, {:set_serial_baud_rate, baudrate_byte})
@@ -167,19 +180,8 @@ defmodule Nerves.IO.PN532.Base do
         write_bytes(uart_pid, in_list_passive_target_command)
 
         receive do
-          # detected single card
-          {:nerves_uart, com_port, <<0xD5, 0x4B, 0x01, in_list_passive_target_card(target_number, sens_res, sel_res, identifier)>>} ->
-            Logger.debug("Received InListPassiveTarget with Mifare card detection frame on #{inspect com_port} with ID: #{inspect Base.encode16(identifier)}")
-            {:ok, %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}}
-          
-          # detected multiple cards
           {:nerves_uart, com_port, <<0xD5, 0x4B, total_cards::signed-integer, rest::binary>>} ->
-            cards = for <<in_list_passive_target_card(target_number, sens_res, sel_res, identifier) <- rest>> do 
-              %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}
-            end
-            identifiers_in_base16 = cards |> Enum.map(fn(x) -> Base.encode16(x.nfcid) end)
-            Logger.debug("Received InListPassiveTarget with '#{inspect total_cards}' new Mifare cards on #{inspect com_port} with ID: #{inspect identifiers_in_base16}")
-            {:ok, cards}
+            process_card_detection(total_cards, rest)
         after
           @read_timeout ->
             write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
@@ -193,7 +195,7 @@ defmodule Nerves.IO.PN532.Base do
       end
 
       def handle_call({:open, _com_port, _uart_speed}, _, state = %{uart_open: true}) do
-        {:reply, :uart_already_open, state}
+        {:reply, {:error, :already_open}, state}
       end
 
       def handle_call({:open, com_port, uart_speed}, _from, state = %{uart_pid: uart_pid}) do     
@@ -207,7 +209,7 @@ defmodule Nerves.IO.PN532.Base do
       end
 
       def handle_call(_, _, state = %{uart_open: false}) do
-        {:reply, :uart_not_open, state}
+        {:reply, {:error, :not_open}, state}
       end
 
       def handle_call(:close, _from, state = %{uart_pid: uart_pid}) do
@@ -233,14 +235,38 @@ defmodule Nerves.IO.PN532.Base do
         {:reply, response, %{state | power_mode: new_power_mode}}
       end
 
+      def handle_call({:set_serial_baud_rate, baud_rate}, _from, state = %{uart_pid: uart_pid}) do
+        new_power_mode = wakeup(state)
+
+        command = <<0x10>> <> baud_rate
+        write_bytes(uart_pid, command)
+        response =
+          receive do
+            {:nerves_uart, com_port, <<0xD5, 0x11>>} ->
+              write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
+              :ok
+            {:nerves_uart, com_port, <<0xD5, 0x11, status>>} ->
+              error =  get_error(status)
+              {:error, error}
+          after
+            @read_timeout ->
+              {:error, :timeout}
+          end
+
+        {:reply, response, state}
+      end
+
       def handle_call({:in_data_exchange, device_id, cmd, data}, _from, state = %{uart_pid: uart_pid}) do
         new_power_mode = wakeup(state)
 
         write_bytes(uart_pid, <<0x40>> <> <<device_id>> <> <<cmd>> <> data)
         response = 
           receive do
+            # Data exchange was successful, this is returned on successful authentication
             {:nerves_uart, com_port, <<0xD5, 0x41, 0>>} -> :ok
+            # Data exchange was successful, with resulting data
             {:nerves_uart, com_port, <<0xD5, 0x41, 0, rest::binary>>} -> {:ok, rest}
+            # Error happened
             {:nerves_uart, com_port, <<0xD5, 0x41, status>>} ->
               error =  get_error(status)
               {:error, error}
@@ -287,21 +313,18 @@ defmodule Nerves.IO.PN532.Base do
 
       def handle_info({:detect_target, target_type}, state = %{uart_pid: uart_pid, current_card: current_card}) do
         new_power_mode = wakeup(state)
-
-        # in_list_passive_target_command = <<0x4A, 0x01, target_type>>
-        # write_bytes(uart_pid, in_list_passive_target_command)
         
         new_state = 
-          with {:ok, card = %{nfcid: identifier}} <- detect_card(uart_pid, target_type, 1) do
+          with {:ok, card} <- detect_card(uart_pid, target_type, 1) do
             if current_card != card do
-              Logger.info("Detected new Mifare card with ID: #{Base.encode16(identifier)}")
               #TODO: notify of new card detection
+              card_detected(card)
             end
             %{state | current_card: card}
           else
             _ ->
               if current_card != nil do
-                Logger.info("Lost connection with Mifare card with ID: #{Base.encode16(current_card.nfcid)}")
+                card_lost(current_card)
               end
               %{state | current_card: nil}
           end
