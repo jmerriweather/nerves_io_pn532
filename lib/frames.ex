@@ -12,7 +12,7 @@ defmodule Nerves.IO.PN532.Frames do
     end
   end
 
-  defmacro get_firmware_version_response(ic_version, version, revision, support) do
+  defmacro firmware_version_response(ic_version, version, revision, support) do
     quote do
       <<
         0xD5, 0x03, 

@@ -8,12 +8,9 @@ defmodule Nerves.IO.PN532.Base do
     detection_interval = Keyword.get(opts, :detection_interval, 50)
     quote do
       use GenServer
-
       @behaviour Nerves.IO.PN532.Base
-
       require Logger
       require Nerves.IO.PN532.Frames
-
       import Nerves.IO.PN532.Frames
 
       @read_timeout unquote(read_timeout)
@@ -68,11 +65,7 @@ defmodule Nerves.IO.PN532.Base do
 
       @spec set_serial_baud_rate(pid, pos_integer) :: :ok | {:error, {atom, String.t}} | {:error, :timeout} 
       def set_serial_baud_rate(pid, baud_rate) do
-        with {:ok, baudrate_byte} <- get_baud_rate(baud_rate) do
-          GenServer.call(pid, {:set_serial_baud_rate, baudrate_byte})
-        else
-          error -> {:error, error}
-        end
+        GenServer.call(pid, {:set_serial_baud_rate, baud_rate})       
       end
 
       @spec get_target_type(atom) :: {:ok, binary} | :invalid_target_type
@@ -224,7 +217,7 @@ defmodule Nerves.IO.PN532.Base do
         write_bytes(uart_pid, firmware_version_command)
         response = 
           receive do
-            {:nerves_uart, com_port, get_firmware_version_response(ic_version, version, revision, support)} ->
+            {:nerves_uart, com_port, firmware_version_response(ic_version, version, revision, support)} ->
               Logger.debug("Received firmware version frame on #{inspect com_port} with version: #{inspect version}.#{inspect revision}.#{inspect support}")
               {:ok, %{ic_version: ic_version, version: version, revision: revision, support: support}}
           after
@@ -238,19 +231,33 @@ defmodule Nerves.IO.PN532.Base do
       def handle_call({:set_serial_baud_rate, baud_rate}, _from, state = %{uart_pid: uart_pid}) do
         new_power_mode = wakeup(state)
 
-        command = <<0x10>> <> baud_rate
-        write_bytes(uart_pid, command)
         response =
-          receive do
-            {:nerves_uart, com_port, <<0xD5, 0x11>>} ->
-              write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
-              :ok
-            {:nerves_uart, com_port, <<0xD5, 0x11, status>>} ->
-              error =  get_error(status)
-              {:error, error}
-          after
-            @read_timeout ->
-              {:error, :timeout}
+          # convert baud rate number into baud rate command byte
+          with {:ok, baudrate_byte} <- get_baud_rate(baud_rate) do
+            command = <<0x10>> <> baudrate_byte
+            # send set baud rate command 
+            write_bytes(uart_pid, command)
+
+            receive do
+              # wait for success message
+              {:nerves_uart, com_port, <<0xD5, 0x11>>} ->
+                # send ACK frame to let the PN532 know we are ready to change
+                write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
+                # change baud rate of UART
+                with :ok <- Nerves.UART.configure(uart_pid, speed: baud_rate) do
+                  {:ok, baud_rate}
+                else
+                  error -> error
+                end
+              {:nerves_uart, com_port, <<0xD5, 0x11, status>>} ->
+                error =  get_error(status)
+                {:error, error}
+            after
+              @read_timeout ->
+                {:error, :timeout}
+            end        
+          else
+            error -> {:error, error}
           end
 
         {:reply, response, state}
@@ -317,7 +324,6 @@ defmodule Nerves.IO.PN532.Base do
         new_state = 
           with {:ok, card} <- detect_card(uart_pid, target_type, 1) do
             if current_card != card do
-              #TODO: notify of new card detection
               card_detected(card)
             end
             %{state | current_card: card}
@@ -340,12 +346,12 @@ defmodule Nerves.IO.PN532.Base do
       end
 
       def handle_info({:nerves_uart, _com_port, @ack_frame}, state) do
-        #Logger.info("Received ACK frame on #{inspect com_port}")
+        Logger.debug("Received ACK frame on #{inspect com_port}")
         {:noreply, state}
       end
 
       def handle_info({:nerves_uart, _com_port, @nack_frame}, state) do
-        #Logger.info("Received NACK frame on #{inspect com_port}")
+        Logger.debug("Received NACK frame on #{inspect com_port}")
         {:noreply, state}
       end
     end
