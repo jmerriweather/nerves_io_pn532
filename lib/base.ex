@@ -6,7 +6,7 @@ defmodule Nerves.IO.PN532.Base do
   defmacro __using__(opts \\ []) do
     read_timeout = Keyword.get(opts, :read_timeout, 500)
     detection_interval = Keyword.get(opts, :detection_interval, 50)
-    quote do
+    quote location: :keep do
       use GenServer
       @behaviour Nerves.IO.PN532.Base
       require Logger
@@ -345,12 +345,12 @@ defmodule Nerves.IO.PN532.Base do
         {:noreply, state}
       end
 
-      def handle_info({:nerves_uart, _com_port, @ack_frame}, state) do
+      def handle_info({:nerves_uart, com_port, @ack_frame}, state) do
         Logger.debug("Received ACK frame on #{inspect com_port}")
         {:noreply, state}
       end
 
-      def handle_info({:nerves_uart, _com_port, @nack_frame}, state) do
+      def handle_info({:nerves_uart, com_port, @nack_frame}, state) do
         Logger.debug("Received NACK frame on #{inspect com_port}")
         {:noreply, state}
       end
