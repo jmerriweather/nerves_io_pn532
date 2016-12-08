@@ -42,10 +42,10 @@ defmodule Nerves.IO.PN532.Frames do
         unquote(startcode1)::binary-size(1), 
         unquote(startcode2)::binary-size(1), 
         unquote(combined_length)::integer-signed, 
-        unquote(lcs)::integer-signed, 
+        unquote(lcs)::integer-unsigned, 
         unquote(tfi)::binary-size(1), 
         unquote(command)::binary-size(unquote(length)), 
-        unquote(dsc)::integer-signed, 
+        unquote(dsc)::integer-unsigned, 
         unquote(postamble)::binary-size(1)
       >>
     end

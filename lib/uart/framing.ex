@@ -86,6 +86,17 @@ defmodule Nerves.IO.PN532.UART.Framing do
     state.processed == <<>> and state.in_process == <<>>
   end
 
+  def checksum_length(length, length_checksum) do
+    length + length_checksum == 0x00
+  end
+
+  def checksum_data(data, data_checksum) do
+    dsc_checksum = checksum(@pn532_to_host <> data)
+    dsc = ~~~data_checksum + 1
+    Logger.debug("Data Checksum: #{inspect dsc_checksum}, Expected: #{dsc}")
+    dsc_checksum + dsc == 0x00
+  end
+
   # No more data to process
   defp process_data(processed_frame, <<>>, %{frame_state: frame_state, frames: frames, frame_length: frame_length}) do
     {processed_frame, <<>>, frame_state, frames, frame_length}
@@ -103,65 +114,75 @@ defmodule Nerves.IO.PN532.UART.Framing do
     process_data(<<>>, rest, %{state | frames: [completed_frame | frames]})
   end
 
-  # If we're not waiting for an ACK/NACK assume that we are processing a normal frame
-  defp process_data(processed_frame, to_process, %{frame_state: frame_state, frames: frames, frame_length: frame_length} = state) do
-    Logger.debug("Processing data: #{inspect frame_state}, frame: #{inspect processed_frame}, data: #{inspect to_process}")
-    case to_process do
-      # find preamble
-      <<@preamble, rest::binary>> when frame_state == :preamble ->
-        process_data(<<>>, rest, %{state | frame_state: :start_code_one})
-      # find first start code
-      <<@startcode1, rest::binary>> when frame_state == :start_code_one ->
-        process_data(processed_frame, rest, %{state | frame_state: :start_code_two})
-      # find second start code
-      <<@startcode2, rest::binary>> when frame_state == :start_code_two ->
-        process_data(processed_frame, rest, %{state | frame_state: :frame_length})
-      # found first ack start code
-      <<0x00, rest::binary>> when frame_state == :frame_length ->
-        process_data(processed_frame <> <<0x00>>, rest, %{state | frame_state: :ack_code_two, frame_length: 0})
-      # found second ack start code
-      <<0xFF, rest::binary>> when frame_state == :ack_code_two ->
-        process_data(processed_frame <> <<0xFF>>, rest, %{state | frame_state: :postamble})
-      # found first nack start code
-      <<0xFF, rest::binary>> when frame_state == :frame_length ->
-        process_data(processed_frame <> <<0xFF>>, rest, %{state | frame_state: :nack_code_two, frame_length: 0})
-      # found second nack start code
-      <<0x00, rest::binary>> when frame_state == :nack_code_two ->
-        process_data(processed_frame <> <<0x00>>, rest, %{state | frame_state: :postamble})
-      # get the frame length and store it for later
-      <<length::integer-signed, rest::binary>> when frame_state == :frame_length ->
-        Logger.debug("Found data length: #{length}")
-        process_data(processed_frame, rest, %{state | frame_state: :frame_length_checksum, frame_length: length})
-      # get the length checksum
-      <<length_checksum::integer-signed, rest::binary>> when frame_state == :frame_length_checksum ->
-        # TODO: do length checksum check
-        process_data(processed_frame, rest, %{state | frame_state: :frame_identifier_and_data})
-      # when we have no bytes remaining, change the frame state to check the checksum
-      <<rest::binary>> when frame_state == :frame_identifier_and_data and frame_length == 0 ->
-        Logger.debug("Data length: #{frame_length}")
-        process_data(processed_frame, rest, %{state | frame_state: :message_checksum})
-      # when we're on the last byte of the message, change the frame state to check the checksum
-      <<message::binary-size(1), rest::binary>> when frame_state == :frame_identifier_and_data and frame_length == 1 ->
-        Logger.debug("Data length: #{frame_length}")
-        process_data(processed_frame <> message, rest, %{state | frame_state: :message_checksum})
-      # keep processing data until we've read the full frame length
-      <<message::binary-size(1), rest::binary>> when frame_state == :frame_identifier_and_data ->
-        Logger.debug("Data length: #{frame_length}")
-        process_data(processed_frame <> message, rest, %{state | frame_state: :frame_identifier_and_data, frame_length: frame_length - 1})
-      # get the data checksum
-      <<message_checksum::integer-signed, rest::binary>> when frame_state == :message_checksum ->
-        # TODO: do message checksum check
-        process_data(processed_frame, rest, %{state | frame_state: :postamble})
-      # finally get the postamble, add the frame to the list of frames and keep processing any additional data
-      <<@postamble, rest::binary>> when frame_state == :postamble ->
-        process_data(<<>>, rest, %{state | frame_state: :preamble, frames: [processed_frame | frames]})
-      # we've got rubbish data, skip this byte and keep trying
-      <<rubbish::binary-size(1), rest::binary>> ->
-        Logger.warn("Ignoring rubbish data: #{rubbish}")
-        process_data(processed_frame, rest, state)
-      # shouldn't be here
-      unknown ->
-        Logger.debug("Unknown data: #{inspect unknown}, #{inspect frame_state}, frame: #{inspect processed_frame}, data: #{inspect to_process}")
+  defp process_data(_processed_frame, <<@preamble, rest::binary>>, %{frame_state: :preamble} = state) do
+    process_data(<<>>, rest, %{state | frame_state: :start_code_one})
+  end
+
+  defp process_data(processed_frame, <<@startcode1, rest::binary>>, %{frame_state: :start_code_one} = state) do
+    process_data(processed_frame, rest, %{state | frame_state: :start_code_two})
+  end
+
+  defp process_data(processed_frame, <<@startcode2, rest::binary>>, %{frame_state: :start_code_two} = state) do
+    process_data(processed_frame, rest, %{state | frame_state: :frame_length})
+  end
+
+  defp process_data(processed_frame, <<0x00, rest::binary>>, %{frame_state: :frame_length} = state) do
+    process_data(processed_frame <> <<0x00>>, rest, %{state | frame_state: :ack_code_two, frame_length: 0})
+  end
+
+  defp process_data(processed_frame, <<0xFF, rest::binary>>, %{frame_state: :ack_code_two} = state) do
+    process_data(processed_frame <> <<0xFF>>, rest, %{state | frame_state: :postamble})
+  end
+
+  defp process_data(processed_frame, <<0xFF, rest::binary>>, %{frame_state: :frame_length} = state) do
+    process_data(processed_frame <> <<0xFF>>, rest, %{state | frame_state: :nack_code_two, frame_length: 0})
+  end
+
+  defp process_data(processed_frame, <<0x00, rest::binary>>, %{frame_state: :nack_code_two} = state) do
+    process_data(processed_frame <> <<0x00>>, rest, %{state | frame_state: :postamble})
+  end
+
+  defp process_data(processed_frame, <<length::integer-unsigned, rest::binary>>, %{frame_state: :frame_length} = state) do
+    Logger.debug("Found data length: #{length}")
+    process_data(processed_frame, rest, %{state | frame_state: :frame_length_checksum, frame_length: length})
+  end
+
+  defp process_data(processed_frame, <<length_checksum::integer-signed, rest::binary>>, %{frame_state: :frame_length_checksum, frame_length: length} = state) do
+    checksum_success = checksum_length(length, length_checksum)
+    Logger.debug("Length Checksum: #{checksum_success}")
+    if checksum_success do
+      process_data(processed_frame, rest, %{state | frame_state: :frame_identifier_and_data})
+    else
+      process_data(<<>>, rest, %{state | frame_state: :preamble})
     end
+  end
+
+  defp process_data(processed_frame, <<rest::binary>>, %{frame_state: :frame_identifier_and_data, frame_length: 0} = state) do
+    Logger.debug("Data length: 0")
+    process_data(processed_frame, rest, %{state | frame_state: :message_checksum})
+  end
+
+  defp process_data(processed_frame, <<message::binary-size(1), rest::binary>>, %{frame_state: :frame_identifier_and_data, frame_length: frame_length} = state) do
+    Logger.debug("Data length: #{frame_length}")
+    process_data(processed_frame <> message, rest, %{state | frame_state: :frame_identifier_and_data, frame_length: frame_length - 1})
+  end
+
+  defp process_data(processed_frame, <<message_checksum::integer-unsigned, rest::binary>>, %{frame_state: :message_checksum} = state) do
+    checksum_success = checksum_data(processed_frame, message_checksum)
+    Logger.debug("Data Checksum Result: #{checksum_success}")
+    process_data(processed_frame, rest, %{state | frame_state: :postamble})
+  end
+
+  defp process_data(processed_frame, <<@postamble, rest::binary>>, %{frame_state: :postamble, frames: frames} = state) do
+    process_data(<<>>, rest, %{state | frame_state: :preamble, frames: [processed_frame | frames]})
+  end
+
+  defp process_data(processed_frame, <<rubbish::binary-size(1), rest::binary>>, state) do
+    Logger.warn("Ignoring rubbish data: #{rubbish}")
+    process_data(processed_frame, rest, state)
+  end
+
+  defp process_data(processed_frame, to_process, %{frame_state: frame_state}) do
+    Logger.debug("Unknown data: #{inspect to_process}, #{inspect frame_state}, frame: #{inspect processed_frame}, data: #{inspect to_process}")
   end
 end
