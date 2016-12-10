@@ -9,11 +9,11 @@ defmodule Nerves.IO.PN532.MifareClient do
     GenServer.cast(pid, :stop_target_detection)
   end
 
-  def card_detected(card = %{nfcid: identifier}) do
+  def card_detected(_card = %{nfcid: identifier}) do
     Logger.info("Detected new Mifare card with ID: #{Base.encode16(identifier)}")
   end
 
-  def card_lost(card = %{nfcid: identifier}) do
+  def card_lost(_card = %{nfcid: identifier}) do
     Logger.info("Lost connection with Mifare card with ID: #{Base.encode16(identifier)}")
   end
 
@@ -47,10 +47,10 @@ defmodule Nerves.IO.PN532.MifareClient do
   end
 
   def write16(pid, device_id, block, <<data::binary-size(16)>>) do
-    GenServer.call(pid, {:in_data_exchange, device_id, 0xA0, <<block, data>>})
+    GenServer.call(pid, {:in_data_exchange, device_id, 0xA0, <<block>> <> data})
   end
 
   def write4(pid, device_id, block, <<data::binary-size(4)>>) do
-    GenServer.call(pid, {:in_data_exchange, device_id, 0xA2, <<block, data>>})
+    GenServer.call(pid, {:in_data_exchange, device_id, 0xA2, <<block>> <> data})
   end
 end
