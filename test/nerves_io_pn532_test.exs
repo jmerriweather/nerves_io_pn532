@@ -30,8 +30,6 @@ defmodule Nerves.IO.PN532Test do
   test "start and stop mifare target detection", %{mifare_client_pid: pid} do
     start_result = MifareClientTest.start_target_detection(pid)
 
-    Process.sleep(50)
-
     stop_result = MifareClientTest.stop_target_detection(pid)
 
     assert start_result == :ok

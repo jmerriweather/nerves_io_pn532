@@ -9,7 +9,9 @@ defmodule Nerves.IO.PN532.MifareClient do
       use Nerves.IO.PN532.Base, read_timeout: unquote(read_timeout), detection_interval: unquote(detection_interval)
 
       def start_target_detection(pid) do    
-        GenServer.cast(pid, {:start_target_detection, :iso_14443_type_a})
+        result = GenServer.cast(pid, {:start_target_detection, :iso_14443_type_a})
+        Process.sleep(50)
+        result
       end
 
       def stop_target_detection(pid) do    
