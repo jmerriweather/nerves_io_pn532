@@ -1,7 +1,7 @@
 defmodule Nerves.IO.PN532Test do
   use ExUnit.Case
 
-  @test_uart "COM4"
+  @test_uart "COM6"
 
   setup_all do
     # start mifare client genserver
