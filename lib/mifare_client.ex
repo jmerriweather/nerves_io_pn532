@@ -8,24 +8,13 @@ defmodule Nerves.IO.PN532.MifareClient do
     quote location: :keep do
       use Nerves.IO.PN532.Base, read_timeout: unquote(read_timeout), detection_interval: unquote(detection_interval)
 
-      def start_target_detection(pid) do    
-        # result = GenServer.cast(pid, {:start_target_detection, :iso_14443_type_a})
-        # Process.sleep(50)
-        # result
+      def start_target_detection(pid) do
         GenServer.cast(pid, {:start_target_detection, :iso_14443_type_a})
       end
 
       def stop_target_detection(pid) do    
         GenServer.cast(pid, :stop_target_detection)
       end
-
-      # def card_detected(_card = %{nfcid: identifier}) do
-      #   Logger.info("Detected new Mifare card with ID: #{Base.encode16(identifier)}")
-      # end
-
-      # def card_lost(_card = %{nfcid: identifier}) do
-      #   Logger.info("Lost connection with Mifare card with ID: #{Base.encode16(identifier)}")
-      # end
 
       def process_card_detection(1, iso_14443_type_a_target(target_number, sens_res, sel_res, identifier)) do
         Logger.debug("Received Mifare card detection with ID: #{inspect Base.encode16(identifier)}")

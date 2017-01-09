@@ -1,13 +1,35 @@
 defmodule Nerves.IO.PN532.Mixfile do
   use Mix.Project
 
+  @version "0.1.0"
+  @url "https://github.com/jmerriweather/nerves_io_pn532"
+  @maintainers ["Jonathan Merriweather"]
+
   def project do
-    [app: :nerves_io_pn532,
-     version: "0.1.0",
+    [name: "Nerves.IO.PN532",
+     app: :nerves_io_pn532,
+     version: @version,
      elixir: "~> 1.3",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
      deps: deps()]
+  end
+
+  def package do
+    [
+      maintainers: @maintainers,
+      licenses: ["MIT"],
+      links: %{"GitHub" => @url},
+      files: ~w(lib) ++ ~w(LICENSE.md mix.exs README.md)
+    ]
+  end
+
+  def docs do
+    [
+      extras: ["README.md", "LICENSE.md"],
+      source_ref: "v#{@version}",
+      main: "readme"
+    ]
   end
 
   # Configuration for the OTP application
@@ -27,6 +49,8 @@ defmodule Nerves.IO.PN532.Mixfile do
   #
   # Type "mix help deps" for more examples and options
   defp deps do
-    [{:nerves_uart, "~> 0.1.1"}]
+    [{:nerves_uart, "~> 0.1.1"},
+     {:earmark, ">= 1.0.1", only: :dev},
+     {:ex_doc, "~> 0.13", only: :dev}]
   end
 end
