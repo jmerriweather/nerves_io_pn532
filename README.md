@@ -2,7 +2,7 @@
 
 ## Hardware
 
-Any PN532 board should work as long as is supports UART, however i've been using the following board to develop.
+Any PN532 board should work as long as is supports UART, however I've been using the following board to develop.
 
 [NFC/RFID PN532 breakout Module](http://www.elecfreaks.com/store/nfcrfid-breakout-module-p-519.html)
 
@@ -50,7 +50,7 @@ defmodule Example do
     with {:ok, pid} <- MifareClientImplementation.start_link(),
          :ok <- MifareClientImplementation.open(pid, "COM3"),
          :ok <- MifareClientImplementation.start_target_detection(pid) do
-
+      # ...
     end
   end
 end
