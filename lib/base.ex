@@ -176,7 +176,6 @@ defmodule Nerves.IO.PN532.Base do
         after
           @read_timeout ->
             write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
-            Logger.debug("Timeout InListPassiveTarget")
             {:error, :timeout}
         end
       end

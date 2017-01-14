@@ -89,10 +89,8 @@ defmodule Nerves.IO.PN532.UART.Framing do
   end
 
   def checksum_data(data, data_checksum) do
-    dsc_checksum = checksum(@pn532_to_host <> data)
-    dsc = ~~~data_checksum + 1
-    Logger.debug("Data Checksum: #{inspect dsc_checksum}, Expected: #{dsc}")
-    dsc_checksum + dsc == 0x00
+    # data checksum not implemented yet
+    true
   end
 
   # No more data to process
@@ -167,7 +165,7 @@ defmodule Nerves.IO.PN532.UART.Framing do
 
   defp process_data(processed_frame, <<message_checksum::integer-unsigned, rest::binary>>, %{frame_state: :message_checksum} = state) do
     checksum_success = checksum_data(processed_frame, message_checksum)
-    Logger.debug("Data Checksum Result: #{checksum_success}")
+    #Logger.debug("Data Checksum Result: #{checksum_success}")
     process_data(processed_frame, rest, %{state | frame_state: :postamble})
   end
 
