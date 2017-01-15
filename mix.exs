@@ -6,22 +6,30 @@ defmodule Nerves.IO.PN532.Mixfile do
   @maintainers ["Jonathan Merriweather"]
 
   def project do
-    [name: "Nerves.IO.PN532",
-     app: :nerves_io_pn532,
+    [app: :nerves_io_pn532,
      version: @version,
      elixir: "~> 1.3",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
+     description: description(),
+     package: package(),
      deps: deps()]
   end
 
-  def package do
+  defp package do
     [
+      name: :nerves_io_pn532,
       maintainers: @maintainers,
       licenses: ["MIT"],
       links: %{"GitHub" => @url},
-      files: ~w(lib) ++ ~w(LICENSE.md mix.exs README.md)
+      files: ["lib", "mix.exs", "README*", "LICENSE*"]
     ]
+  end
+
+  defp description do
+    """
+    Elixir library to work with the NXP PN532 RFID module.
+    """
   end
 
   def docs do
