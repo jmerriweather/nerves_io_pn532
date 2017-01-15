@@ -10,7 +10,6 @@ defmodule Nerves.IO.PN532.UART.Framing do
   @postamble 0x00
   @startcode1 0x00
   @startcode2 0xFF
-  @pn532_to_host <<0xD5>>
 
   @wakeup_preamble <<0x55, 0x55, 0x00, 0x00, 0x00>>
   @ack_frame <<0x00, 0xFF>>
@@ -88,7 +87,7 @@ defmodule Nerves.IO.PN532.UART.Framing do
     length + length_checksum == 0x00
   end
 
-  def checksum_data(data, data_checksum) do
+  def checksum_data(_data, _data_checksum) do
     # data checksum not implemented yet
     true
   end
@@ -163,8 +162,8 @@ defmodule Nerves.IO.PN532.UART.Framing do
     process_data(processed_frame <> message, rest, %{state | frame_state: :frame_identifier_and_data, frame_length: frame_length - 1})
   end
 
-  defp process_data(processed_frame, <<message_checksum::integer-unsigned, rest::binary>>, %{frame_state: :message_checksum} = state) do
-    checksum_success = checksum_data(processed_frame, message_checksum)
+  defp process_data(processed_frame, <<_message_checksum::integer-unsigned, rest::binary>>, %{frame_state: :message_checksum} = state) do
+    #checksum_success = checksum_data(processed_frame, message_checksum)
     #Logger.debug("Data Checksum Result: #{checksum_success}")
     process_data(processed_frame, rest, %{state | frame_state: :postamble})
   end
