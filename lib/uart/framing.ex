@@ -45,9 +45,33 @@ defmodule Nerves.IO.PN532.UART.Framing do
   end
 
   def add_framing(data, state) do
-    command = build_command_frame(<<0xD4>>, data)
+    command = build_cmd_frame(<<0xD4>>, data)
     Logger.debug("About to send: #{inspect command}")
     {:ok, command, state}
+  end
+  
+  def build_cmd_frame(tfi, command) do
+    length = byte_size(command)
+    combined_length = length + 1
+    lcs = ~~~(combined_length) + 1
+    dsc_checksum = checksum(tfi <> command)
+    dsc = ~~~(dsc_checksum) + 1
+    cmd_frame(<<0x00>>, <<0x00>>, <<0xFF>>, length, combined_length, lcs, tfi, command, dsc, <<0x00>>)
+  end
+
+  
+  def cmd_frame(preamble, startcode1, startcode2, length, combined_length, lcs, tfi, command, dsc, postamble) do
+      <<
+        preamble::binary-size(1), 
+        startcode1::binary-size(1), 
+        startcode2::binary-size(1), 
+        combined_length::integer-signed, 
+        lcs::integer-unsigned, 
+        tfi::binary-size(1), 
+        command::binary-size(length), 
+        dsc::integer-unsigned, 
+        postamble::binary-size(1)
+      >>
   end
 
   def remove_framing(data, state) do
