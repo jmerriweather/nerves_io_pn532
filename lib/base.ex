@@ -101,7 +101,7 @@ defmodule Nerves.IO.PN532.Base do
 
       def init(_) do
         {:ok, pid} = Nerves.UART.start_link
-        setup(self())
+        send(self(), :setup)
         {:ok, %{
                   uart_pid: pid,
                   uart_open: false,
@@ -323,6 +323,12 @@ defmodule Nerves.IO.PN532.Base do
           Logger.debug("Starting target detection")
           Process.send(self(), {:detect_target, target_byte}, [])
         end
+        {:noreply, state}
+      end
+
+      def handle_info(:setup, state) do        
+        setup(self())
+
         {:noreply, state}
       end
 
