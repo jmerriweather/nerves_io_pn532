@@ -327,7 +327,7 @@ defmodule Nerves.IO.PN532.Base do
       end
 
       def handle_info(:setup, state) do    
-        Task.start(__MODULE__, :setup, [self(), state])
+        Task.start_link(__MODULE__, :setup, [self(), state])
 
         {:noreply, state}
       end
