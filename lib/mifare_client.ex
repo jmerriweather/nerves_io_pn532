@@ -1,7 +1,7 @@
 defmodule Nerves.IO.PN532.MifareClient do
   @callback card_detected(map) :: :ok | {:error, term}
   @callback card_lost(map) :: :ok | {:error, term}
-  @callback setup(pid) :: :ok
+  @callback setup(pid, map) :: :ok
 
   defmacro __using__(opts \\ []) do
     read_timeout = Keyword.get(opts, :read_timeout, 500)
