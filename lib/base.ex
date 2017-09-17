@@ -2,6 +2,7 @@ defmodule Nerves.IO.PN532.Base do
   @callback process_card_detection(integer, binary) :: {:ok, term} | {:error, term}
   @callback card_detected(map) :: :ok | {:error, term}
   @callback card_lost(map) :: :ok | {:error, term}
+  @callback init() :: :ok
 
   defmacro __using__(opts \\ []) do
     read_timeout = Keyword.get(opts, :read_timeout, 500)
@@ -100,6 +101,7 @@ defmodule Nerves.IO.PN532.Base do
 
       def init(_) do
         {:ok, pid} = Nerves.UART.start_link
+        init()
         {:ok, %{
                   uart_pid: pid,
                   uart_open: false,
