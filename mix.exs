@@ -57,7 +57,7 @@ defmodule Nerves.IO.PN532.Mixfile do
   #
   # Type "mix help deps" for more examples and options
   defp deps do
-    [{:nerves_uart, "~> 0.1.2"},
+    [{:nerves_uart, "~> 1.2.0"},
      {:earmark, ">= 1.0.1", only: :dev},
      {:ex_doc, "~> 0.13", only: :dev}]
   end

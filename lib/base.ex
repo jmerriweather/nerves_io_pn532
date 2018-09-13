@@ -22,7 +22,7 @@ defmodule Nerves.IO.PN532.Base do
       @ack_frame <<0x00, 0xFF>>
       @nack_frame <<0xFF, 0x00>>
 
-      # API      
+      # API
       @spec start_link :: {:ok, pid} | {:error, term}
       def start_link(opts \\ []) do
         GenServer.start_link(__MODULE__, [], opts)
@@ -30,17 +30,17 @@ defmodule Nerves.IO.PN532.Base do
 
       @spec open(pid, String.t, [pos_integer]) :: :ok | {:error, :already_open} | {:error, term}
       def open(pid, com_port, uart_speed \\ 115_200) do
-        GenServer.call(pid, {:open, com_port, uart_speed}) 
+        GenServer.call(pid, {:open, com_port, uart_speed})
       end
 
       @spec close(pid) :: :ok | {:error, :not_open}
       def close(pid) do
-        GenServer.call(pid, :close) 
+        GenServer.call(pid, :close)
       end
 
       @spec get_current_card(pid) :: {:ok, map} | {:error, term}
       def get_current_card(pid) do
-        GenServer.call(pid, :get_current_card) 
+        GenServer.call(pid, :get_current_card)
       end
 
       def in_data_exchange(pid, device_id, cmd, addr, data) do
@@ -64,9 +64,9 @@ defmodule Nerves.IO.PN532.Base do
         end
       end
 
-      @spec set_serial_baud_rate(pid, pos_integer) :: :ok | {:error, {atom, String.t}} | {:error, :timeout} 
+      @spec set_serial_baud_rate(pid, pos_integer) :: :ok | {:error, {atom, String.t}} | {:error, :timeout}
       def set_serial_baud_rate(pid, baud_rate) do
-        GenServer.call(pid, {:set_serial_baud_rate, baud_rate})       
+        GenServer.call(pid, {:set_serial_baud_rate, baud_rate})
       end
 
       @spec get_target_type(atom) :: {:ok, binary} | :invalid_target_type
@@ -101,12 +101,12 @@ defmodule Nerves.IO.PN532.Base do
 
       def init(_) do
         {:ok, pid} = Nerves.UART.start_link
-        send(self(), :setup)        
+        send(self(), :setup)
         {:ok, %{
                   uart_pid: pid,
                   uart_open: false,
                   uart_speed: 115200,
-                  power_mode: :low_v_bat, 
+                  power_mode: :low_v_bat,
                   current_card: nil,
                   detection_ref: nil
               }}
@@ -190,11 +190,11 @@ defmodule Nerves.IO.PN532.Base do
         {:reply, {:error, :already_open}, state}
       end
 
-      def handle_call({:open, com_port, uart_speed}, _from, state = %{uart_pid: uart_pid}) do     
+      def handle_call({:open, com_port, uart_speed}, _from, state = %{uart_pid: uart_pid}) do
         with :ok <- Nerves.UART.open(uart_pid, com_port, speed: uart_speed, active: true, framing: Nerves.IO.PN532.UART.Framing) do
           {:reply, :ok, %{state | uart_open: true}}
         else
-          error -> 
+          error ->
             Logger.error("Error occured opening UART: #{inspect error}")
             {:reply, error, %{state | uart_speed: uart_speed}}
         end
@@ -209,12 +209,12 @@ defmodule Nerves.IO.PN532.Base do
         {:reply, response, %{state | uart_open: false}}
       end
 
-      def handle_call(:get_firmware_version, _from, state = %{uart_pid: uart_pid}) do        
+      def handle_call(:get_firmware_version, _from, state = %{uart_pid: uart_pid}) do
         new_power_mode = wakeup(state)
-        
+
         firmware_version_command = <<0x02>>
         write_bytes(uart_pid, firmware_version_command)
-        response = 
+        response =
           receive do
             {:nerves_uart, com_port, firmware_version_response(ic_version, version, revision, support)} ->
               Logger.debug("Received firmware version frame on #{inspect com_port} with version: #{inspect version}.#{inspect revision}.#{inspect support}")
@@ -223,21 +223,21 @@ defmodule Nerves.IO.PN532.Base do
             @read_timeout ->
               {:error, :timeout}
           end
-        
+
         {:reply, response, %{state | power_mode: new_power_mode}}
       end
 
-      def handle_call({:set_serial_baud_rate, baud_rate}, _from, state = %{uart_pid: uart_pid}) do        
+      def handle_call({:set_serial_baud_rate, baud_rate}, _from, state = %{uart_pid: uart_pid}) do
         new_power_mode = wakeup(state)
 
         response =
           # convert baud rate number into baud rate command byte
           with {:ok, baudrate_byte} <- get_baud_rate(baud_rate) do
             command = <<0x10>> <> baudrate_byte
-            # send set baud rate command 
+            # send set baud rate command
             write_bytes(uart_pid, command)
 
-            receive do              
+            receive do
               # wait for ACK message
               {:nerves_uart, com_port, @ack_frame} ->
                 receive do
@@ -271,11 +271,11 @@ defmodule Nerves.IO.PN532.Base do
         {:reply, response, state}
       end
 
-      def handle_call({:in_data_exchange, device_id, cmd, data}, _from, state = %{uart_pid: uart_pid}) do        
+      def handle_call({:in_data_exchange, device_id, cmd, data}, _from, state = %{uart_pid: uart_pid}) do
         new_power_mode = wakeup(state)
 
         write_bytes(uart_pid, <<0x40>> <> <<device_id>> <> <<cmd>> <> data)
-        response = 
+        response =
           receive do
             # Data exchange was successful, this is returned on successful authentication
             {:nerves_uart, com_port, <<0xD5, 0x41, 0>>} -> :ok
@@ -293,9 +293,9 @@ defmodule Nerves.IO.PN532.Base do
         {:reply, response, %{state | power_mode: new_power_mode}}
       end
 
-      def handle_call({:in_list_passive_target, target_type, max_targets}, _from, state = %{uart_pid: uart_pid}) do        
+      def handle_call({:in_list_passive_target, target_type, max_targets}, _from, state = %{uart_pid: uart_pid}) do
         new_power_mode = wakeup(state)
-        
+
         response = detect_card(uart_pid, target_type, max_targets)
 
         {:reply, response, %{state | power_mode: new_power_mode}}
@@ -326,16 +326,16 @@ defmodule Nerves.IO.PN532.Base do
         {:noreply, state}
       end
 
-      def handle_info(:setup, state) do    
-        Task.start_link(__MODULE__, :setup, [self(), state])
+      def handle_info(:setup, state) do
+        setup(self(), state)
 
         {:noreply, state}
       end
 
       def handle_info({:detect_target, target_type}, state = %{uart_pid: uart_pid, current_card: current_card}) do
         new_power_mode = wakeup(state)
-        
-        new_state = 
+
+        new_state =
           with {:ok, card} <- detect_card(uart_pid, target_type, 1) do
             if current_card != card do
               card_detected(card)
@@ -348,7 +348,7 @@ defmodule Nerves.IO.PN532.Base do
               end
               %{state | current_card: nil}
           end
-        
+
         detection_ref = Process.send_after(self(), {:detect_target, target_type}, @detection_interval)
 
         {:noreply, %{new_state | power_mode: new_power_mode, detection_ref: detection_ref}}

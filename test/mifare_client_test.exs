@@ -1,7 +1,7 @@
 defmodule MifareClientTest do
   use Nerves.IO.PN532.MifareClient
 
-  def init() do
+  def setup(pid, state) do
     Logger.info("MifareClient initi")
   end
 

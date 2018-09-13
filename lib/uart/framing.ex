@@ -1,9 +1,9 @@
-defmodule Nerves.IO.PN532.UART.Framing do  
+defmodule Nerves.IO.PN532.UART.Framing do
   @behaviour Nerves.UART.Framing
   import Nerves.IO.PN532.Frames
   require Nerves.IO.PN532.Frames
   require Logger
-  
+
   use Bitwise
 
   @preamble 0x00
@@ -49,43 +49,38 @@ defmodule Nerves.IO.PN532.UART.Framing do
     Logger.debug("About to send: #{inspect command}")
     {:ok, command, state}
   end
-  
+
   def build_cmd_frame(tfi, command) do
     length = byte_size(command)
     combined_length = length + 1
     lcs = ~~~(combined_length) + 1
     dsc_checksum = checksum(tfi <> command)
     dsc = ~~~(dsc_checksum) + 1
-    cmd_frame(<<0x00>>, <<0x00>>, <<0xFF>>, length, combined_length, lcs, tfi, command, dsc, <<0x00>>)
+    cmd_frame(length, combined_length, lcs, tfi, command, dsc)
   end
 
-  
-  def cmd_frame(preamble, startcode1, startcode2, length, combined_length, lcs, tfi, command, dsc, postamble) do
-      <<
-        preamble::binary-size(1), 
-        startcode1::binary-size(1), 
-        startcode2::binary-size(1), 
-        combined_length::integer-signed, 
-        lcs::integer-unsigned, 
-        tfi::binary-size(1), 
-        command::binary-size(length), 
-        dsc::integer-unsigned, 
-        postamble::binary-size(1)
-      >>
+  def cmd_frame(length, combined_length, lcs, tfi, command, dsc) do
+      <<0x00, 0x00, 0xFF,
+      combined_length::integer-signed,
+      lcs::integer-unsigned,
+      tfi::binary,
+      command::binary-size(length),
+      dsc::integer-unsigned,
+      0x00>>
   end
 
   def remove_framing(data, state) do
-    {new_processed, new_in_process, new_process_state, frames, new_frame_length} = 
-      process_data(state.processed, state.in_process <> data, 
+    {new_processed, new_in_process, new_process_state, frames, new_frame_length} =
+      process_data(state.processed, state.in_process <> data,
         %{frame_state: state.process_state,
-          frames: [], 
+          frames: [],
           frame_length: state.frame_length})
 
-    new_state = %{state | processed: new_processed, 
-                          in_process: new_in_process, 
+    new_state = %{state | processed: new_processed,
+                          in_process: new_in_process,
                           process_state: new_process_state,
                           frame_length: new_frame_length}
-                          
+
     rc = if buffer_empty?(new_state), do: :ok, else: :in_frame
     {rc, frames, new_state}
   end
