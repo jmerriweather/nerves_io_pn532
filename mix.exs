@@ -1,7 +1,7 @@
 defmodule Nerves.IO.PN532.Mixfile do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.1.1"
   @url "https://github.com/jmerriweather/nerves_io_pn532"
   @maintainers ["Jonathan Merriweather"]
 
