@@ -5,8 +5,7 @@ defmodule Nerves.IO.PN532.MifareClient do
     detection_interval = Keyword.get(opts, :detection_interval, 50)
     quote location: :keep do
 
-      @callback card_detected(map) :: :ok | {:error, term}
-      @callback card_lost(map) :: :ok | {:error, term}
+      @callback handle_event(map) :: :ok | {:error, term}
       @callback setup(pid, map) :: :ok
       use Nerves.IO.PN532.Base, read_timeout: unquote(read_timeout), detection_interval: unquote(detection_interval)
 
@@ -18,12 +17,12 @@ defmodule Nerves.IO.PN532.MifareClient do
         GenServer.cast(pid, :stop_target_detection)
       end
 
-      def process_card_detection(1, iso_14443_type_a_target(target_number, sens_res, sel_res, identifier)) do
+      def handle_detection(1, iso_14443_type_a_target(target_number, sens_res, sel_res, identifier)) do
         Logger.debug("Received Mifare card detection with ID: #{inspect Base.encode16(identifier)}")
         {:ok, %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}}
       end
 
-      def process_card_detection(total_cards, card_data) do
+      def handle_detection(total_cards, card_data) do
         cards = for <<iso_14443_type_a_target(target_number, sens_res, sel_res, identifier) <- card_data>> do
           %{tg: target_number, sens_res: sens_res, sel_res: sel_res, nfcid: identifier}
         end

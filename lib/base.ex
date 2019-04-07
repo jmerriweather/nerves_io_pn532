@@ -1,8 +1,7 @@
 defmodule Nerves.IO.PN532.Base do
-  @callback process_card_detection(integer, binary) :: {:ok, term} | {:error, term}
-  @callback card_detected(map) :: :ok | {:error, term}
-  @callback card_lost(map) :: :ok | {:error, term}
+  @callback handle_detection(integer, binary) :: {:ok, term} | {:error, term}
   @callback setup(pid, map) :: :ok
+  @callback handle_event(any, any) :: :ok | {:error, any}
 
   defmacro __using__(opts \\ []) do
     read_timeout = Keyword.get(opts, :read_timeout, 500)
@@ -174,7 +173,7 @@ defmodule Nerves.IO.PN532.Base do
 
         receive do
           {:nerves_uart, com_port, <<0xD5, 0x4B, total_cards::signed-integer, rest::binary>>} ->
-            process_card_detection(total_cards, rest)
+            handle_detection(total_cards, rest)
         after
           @read_timeout ->
             write_bytes(uart_pid, <<0x00, 0x00, 0xFF, @ack_frame, 0x00>>)
@@ -338,13 +337,13 @@ defmodule Nerves.IO.PN532.Base do
         new_state =
           with {:ok, card} <- detect_card(uart_pid, target_type, 1) do
             if current_card != card do
-              card_detected(card)
+              handle_event(:card_detected, card)
             end
             %{state | current_card: card}
           else
             _ ->
               if current_card != nil do
-                card_lost(current_card)
+                handle_event(:card_lost, current_card)
               end
               %{state | current_card: nil}
           end

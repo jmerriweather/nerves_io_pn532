@@ -1,7 +1,7 @@
 defmodule Nerves.IO.PN532Test do
   use ExUnit.Case
 
-  @test_uart "/dev/ttyS5"
+  @test_uart "/dev/ttyS17"
 
   setup_all do
     # start mifare client genserver

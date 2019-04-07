@@ -1,4 +1,5 @@
 defmodule Nerves.IO.PN532.Frames do
+  use Bitwise
 
   defmacro iso_14443_type_a_target(target_number, sens_res, sel_res, identifier) do
     quote do
@@ -24,31 +25,27 @@ defmodule Nerves.IO.PN532.Frames do
     end
   end
 
-  defmacro build_command_frame(tfi, command) do
-    quote do
-      length = byte_size(unquote(command))
+  def build_command_frame(tfi, command) do
+      length = byte_size(command)
       combined_length = length + 1
       lcs = ~~~combined_length + 1
-      dsc_checksum = checksum(unquote(tfi) <> unquote(command))
+      dsc_checksum = checksum(tfi <> command)
       dsc = ~~~dsc_checksum + 1
-      command_frame(<<0x00>>, <<0x00>>, <<0xFF>>, length, combined_length, lcs, unquote(tfi), unquote(command), dsc, <<0x00>>)
-    end
+      command_frame(<<0x00>>, <<0x00>>, <<0xFF>>, length, combined_length, lcs, tfi, command, dsc, <<0x00>>)
   end
 
-  defmacro command_frame(preamble, startcode1, startcode2, length, combined_length, lcs, tfi, command, dsc, postamble) do
-    quote do
+  def command_frame(preamble, startcode1, startcode2, length, combined_length, lcs, tfi, command, dsc, postamble) do
       <<
-        unquote(preamble)::binary-size(1),
-        unquote(startcode1)::binary-size(1),
-        unquote(startcode2)::binary-size(1),
-        unquote(combined_length)::integer-signed,
-        unquote(lcs)::integer-unsigned,
-        unquote(tfi)::binary-size(1),
-        unquote(command)::binary-size(unquote(length)),
-        unquote(dsc)::integer-unsigned,
-        unquote(postamble)::binary-size(1)
+        preamble::binary-size(1),
+        startcode1::binary-size(1),
+        startcode2::binary-size(1),
+        combined_length::integer-signed,
+        lcs::integer-unsigned,
+        tfi::binary-size(1),
+        command::binary-size(length),
+        dsc::integer-unsigned,
+        postamble::binary-size(1)
       >>
-    end
   end
 
   def checksum(data), do: checksum(data, 0)
